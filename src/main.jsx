@@ -2,23 +2,17 @@ import React, { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import './style.css';
 
-const STORAGE_KEY = 'little-notes-v1';
 const colors = ['#fff0a8', '#ffdcd7', '#d9f2de', '#e6dcff', '#d9efff', '#ffe1ef'];
-const starters = [
-  { title: 'Little things, big joy ✨', body: 'Fresh sheets, a really good cup of tea, and that song you forgot you loved.', color: colors[0], pinned: true },
-  { title: 'Weekend wishlist', body: '🌷 Wander somewhere new\n🥐 Find the flakiest croissant\n📚 Read in the sunshine', color: colors[1], pinned: false },
-  { title: 'A tiny reminder', body: 'You don’t have to have it all figured out today. One thing at a time 💛', color: colors[2], pinned: true },
-  { title: 'Pasta night 🍋', body: 'Lemony pasta\nParmesan (lots)\nA handful of basil\nGarlic bread for the table', color: colors[3], pinned: false },
-  { title: 'Ideas for later', body: '• Start a little herb garden\n• Send that postcard\n• Make a playlist for rainy days', color: colors[4], pinned: false },
-];
-
-function readNotes() {
-  try {
-    const stored = JSON.parse(localStorage.getItem(STORAGE_KEY));
-    return Array.isArray(stored) ? stored : starters.map((note, i) => ({ ...note, id: `starter-${i}`, updatedAt: Date.now() - i * 3600000 }));
-  } catch {
-    return starters.map((note, i) => ({ ...note, id: `starter-${i}`, updatedAt: Date.now() - i * 3600000 }));
+async function api(path, options = {}) {
+  const response = await fetch(path, {
+    ...options,
+    headers: { 'Content-Type': 'application/json', ...options.headers },
+  });
+  if (!response.ok) {
+    const result = await response.json().catch(() => ({}));
+    throw new Error(result.error || 'Could not reach the notes server.');
   }
+  return response.status === 204 ? null : response.json();
 }
 
 function Icon({ name, size = 18 }) {
@@ -35,39 +29,65 @@ function Icon({ name, size = 18 }) {
 }
 
 function App() {
-  const [notes, setNotes] = useState(readNotes);
+  const [notes, setNotes] = useState([]);
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState('all');
   const [editing, setEditing] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
   useEffect(() => {
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(notes)); } catch { /* Storage may be unavailable in private browsing. */ }
-  }, [notes]);
+    let active = true;
+    api('/api/notes')
+      .then((result) => { if (active) setNotes(result); })
+      .catch((cause) => { if (active) setError(cause.message); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, []);
 
   const visibleNotes = notes
     .filter((note) => filter === 'all' || note.pinned)
     .filter((note) => `${note.title} ${note.body}`.toLowerCase().includes(query.toLowerCase()))
     .sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.updatedAt - a.updatedAt);
 
-  function saveNote(event) {
+  async function saveNote(event) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     const title = String(form.get('title')).trim();
     const body = String(form.get('body')).trim();
     if (!title && !body) return;
-    const note = { id: editing?.id ?? crypto.randomUUID(), title: title || 'A little thought', body, color: editing?.color ?? colors[notes.length % colors.length], pinned: editing?.pinned ?? false, updatedAt: Date.now() };
-    setNotes((current) => editing ? current.map((item) => item.id === note.id ? note : item) : [note, ...current]);
-    setEditing(null);
+    const payload = { title, body, color: editing?.color ?? colors[notes.length % colors.length], pinned: editing?.pinned ?? false };
+    try {
+      const note = await api(editing.id ? `/api/notes/${editing.id}` : '/api/notes', {
+        method: editing.id ? 'PATCH' : 'POST',
+        body: JSON.stringify(payload),
+      });
+      setNotes((current) => editing.id ? current.map((item) => item.id === note.id ? note : item) : [note, ...current]);
+      setEditing(null);
+      setError('');
+    } catch (cause) {
+      setError(cause.message);
+    }
   }
 
-  function togglePin(event, id) {
+  async function togglePin(event, id) {
     event.stopPropagation();
-    setNotes((current) => current.map((note) => note.id === id ? { ...note, pinned: !note.pinned } : note));
+    const current = notes.find((note) => note.id === id);
+    try {
+      const note = await api(`/api/notes/${id}`, { method: 'PATCH', body: JSON.stringify({ ...current, pinned: !current.pinned }) });
+      setNotes((items) => items.map((item) => item.id === id ? note : item));
+      setError('');
+    } catch (cause) { setError(cause.message); }
   }
 
-  function deleteNote(event, id) {
+  async function deleteNote(event, id) {
     event.stopPropagation();
-    if (window.confirm('Delete this note?')) setNotes((current) => current.filter((note) => note.id !== id));
+    if (!window.confirm('Delete this note?')) return;
+    try {
+      await api(`/api/notes/${id}`, { method: 'DELETE' });
+      setNotes((current) => current.filter((note) => note.id !== id));
+      setError('');
+    } catch (cause) { setError(cause.message); }
   }
 
   return (
@@ -87,13 +107,14 @@ function App() {
         <section className="content">
           <div className="welcome-row"><div><div className="eyebrow"><Icon name="spark" size={16} /> YOUR HAPPY LITTLE CORNER</div><h1>Hey there, <span>daydreamer</span> <span className="wave">✦</span></h1><p className="subtitle">Catch a thought before it flutters away.</p></div><button className="new-note" onClick={() => setEditing({})}><Icon name="plus" size={18} /> New note</button></div>
 
+          {error && <p className="server-error" role="alert">{error}</p>}
           <div className="toolbar"><label className="search-box"><Icon name="search" size={19} /><input aria-label="Search notes" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Find a little something..." />{query && <button className="clear-search" aria-label="Clear search" onClick={() => setQuery('')}><Icon name="close" size={15} /></button>}</label><span className="notes-total">{visibleNotes.length} {visibleNotes.length === 1 ? 'note' : 'notes'} <span>·</span> all yours</span></div>
 
-          {visibleNotes.length ? <div className="notes-grid">{visibleNotes.map((note, index) => <article key={note.id} className={`note-card card-${index % 5}`} style={{ '--card-color': note.color }} role="button" tabIndex={0} aria-label={`Edit note: ${note.title || 'Untitled'}`} onClick={() => setEditing(note)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setEditing(note); } }}>
+          {loading ? <div className="empty-state"><div className="empty-illustration">✿</div><h2>Gathering your notes...</h2></div> : visibleNotes.length ? <div className="notes-grid">{visibleNotes.map((note, index) => <article key={note.id} className={`note-card card-${index % 5}`} style={{ '--card-color': note.color }} role="button" tabIndex={0} aria-label={`Edit note: ${note.title || 'Untitled'}`} onClick={() => setEditing(note)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setEditing(note); } }}>
             <div className="card-top"><span className="note-type"><span className="type-dot" /> LITTLE NOTE</span><div className="card-actions"><button aria-label={note.pinned ? 'Unpin note' : 'Pin note'} className={`icon-button pin-button ${note.pinned ? 'is-pinned' : ''}`} onClick={(event) => togglePin(event, note.id)}><Icon name="pin" size={16} /></button><button aria-label="Delete note" className="icon-button delete-button" onClick={(event) => deleteNote(event, note.id)}><Icon name="trash" size={16} /></button></div></div>
             <h2>{note.title || 'A little thought'}</h2><p className="note-body">{note.body || <span className="empty-body">Nothing here just yet...</span>}</p><div className="card-footer"><span>{new Date(note.updatedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span><span className="footer-flower">✿</span></div>
           </article>)}</div> : <div className="empty-state"><div className="empty-illustration">{query ? '🔎' : '📝'}</div><h2>{query ? 'No notes found' : filter === 'pinned' ? 'Nothing pinned yet' : 'Your page is wide open'}</h2><p>{query ? 'Try another search and see what pops up.' : 'Every lovely idea starts somewhere. Add your first note!'}</p>{!query && filter === 'all' && <button className="new-note" onClick={() => setEditing({})}><Icon name="plus" size={18} /> Write a note</button>}</div>}
-          <footer className="page-footer"><span>✦</span> Your thoughts are saved right here, on this device. <span>✦</span></footer>
+          <footer className="page-footer"><span>✦</span> Your thoughts are tucked safely into SQLite. <span>✦</span></footer>
         </section>
       </main>
 

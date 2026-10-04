@@ -68,6 +68,8 @@ button{
   display:inline-block;color:#f39b7c;font:700 22px 'Nunito',sans-serif;transform:rotate(15deg);vertical-align:5px;margin-left:4px}
 .subtitle{
   margin:9px 0 0;color:#908c9e;font-size:13px}
+.server-error{
+  margin:22px 0 -16px;padding:11px 14px;border:1px solid #f4c7bc;border-radius:10px;background:#fff0eb;color:#9d4234;font-size:12px}
 .new-note{
   display:flex;align-items:center;gap:9px;border:0;border-radius:12px;padding:12px 17px;background:#755bc5;color:white;font-size:12px;font-weight:700;box-shadow:0 5px 13px #7156c52b;cursor:pointer;transition:transform .15s,box-shadow .15s}
 .new-note:hover{
@@ -256,4 +258,3 @@ to{
   *,*::before,*::after{
   scroll-behavior:auto!important;animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}
 }
-
